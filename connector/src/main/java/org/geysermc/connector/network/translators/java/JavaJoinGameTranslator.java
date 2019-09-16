@@ -26,9 +26,17 @@
 package org.geysermc.connector.network.translators.java;
 
 import com.flowpowered.math.vector.Vector3f;
+import com.github.steveice10.mc.protocol.data.game.entity.player.GameMode;
 import com.github.steveice10.mc.protocol.packet.ingame.server.ServerJoinGamePacket;
 import com.nukkitx.protocol.bedrock.packet.AdventureSettingsPacket;
 import com.nukkitx.protocol.bedrock.packet.LevelChunkPacket;
+import com.nukkitx.protocol.bedrock.packet.MovePlayerPacket;
+import com.nukkitx.protocol.bedrock.packet.PlayStatusPacket;
+import com.nukkitx.protocol.bedrock.packet.SetEntityDataPacket;
+import com.nukkitx.protocol.bedrock.packet.SetPlayerGameTypePacket;
+import org.geysermc.connector.console.GeyserLogger;
+import org.geysermc.connector.entity.Entity;
+import org.geysermc.connector.entity.type.EntityType;
 import org.geysermc.connector.network.session.GeyserSession;
 import org.geysermc.connector.network.translators.PacketTranslator;
 import org.geysermc.connector.network.translators.TranslatorsInit;
@@ -38,24 +46,44 @@ public class JavaJoinGameTranslator extends PacketTranslator<ServerJoinGamePacke
     @Override
     public void translate(ServerJoinGamePacket packet, GeyserSession session) {
         AdventureSettingsPacket bedrockPacket = new AdventureSettingsPacket();
-        bedrockPacket.setUniqueEntityId(packet.getEntityId());
+        bedrockPacket.setUniqueEntityId(session.getPlayerEntity().getGeyserId());
         session.getUpstream().sendPacketImmediately(bedrockPacket);
 
         Vector3f pos = new Vector3f(0, 0, 0);
         int chunkX = pos.getFloorX() >> 4;
         int chunkZ = pos.getFloorZ() >> 4;
-        for (int x = -3; x < 3; x++) {
-            for (int z = -3; z < 3; z++) {
+        for (int x = -1; x < 1; x++) {
+            for (int z = -1; z < 1; z++) {
                 LevelChunkPacket data = new LevelChunkPacket();
                 data.setChunkX(chunkX + x);
                 data.setChunkZ(chunkZ + z);
                 data.setSubChunksLength(0);
 
                 data.setData(TranslatorsInit.EMPTY_LEVEL_CHUNK_DATA);
-
                 session.getUpstream().sendPacketImmediately(data);
 
             }
         }
+
+        PlayStatusPacket playStatus = new PlayStatusPacket();
+        playStatus.setStatus(PlayStatusPacket.Status.LOGIN_SUCCESS);
+        session.getUpstream().sendPacketImmediately(playStatus);
+
+        Entity entity = session.getPlayerEntity();
+        if (entity == null)
+            return;
+
+        session.getPlayerEntity().setEntityId(packet.getEntityId());
+
+        SetPlayerGameTypePacket playerGameTypePacket = new SetPlayerGameTypePacket();
+        playerGameTypePacket.setGamemode(packet.getGameMode().ordinal());
+        session.getUpstream().sendPacket(playerGameTypePacket);
+
+        SetEntityDataPacket entityDataPacket = new SetEntityDataPacket();
+        entityDataPacket.setRuntimeEntityId(entity.getGeyserId());
+        entityDataPacket.getMetadata().putAll(entity.getMetadata());
+        session.getUpstream().sendPacket(entityDataPacket);
+
+        // session.setSpawned(true);
     }
 }

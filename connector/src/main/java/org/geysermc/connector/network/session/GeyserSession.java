@@ -26,6 +26,7 @@
 package org.geysermc.connector.network.session;
 
 import com.flowpowered.math.vector.Vector2f;
+import com.flowpowered.math.vector.Vector2i;
 import com.flowpowered.math.vector.Vector3f;
 import com.flowpowered.math.vector.Vector3i;
 import com.github.steveice10.mc.auth.exception.request.RequestException;
@@ -35,9 +36,8 @@ import com.github.steveice10.packetlib.event.session.ConnectedEvent;
 import com.github.steveice10.packetlib.event.session.DisconnectedEvent;
 import com.github.steveice10.packetlib.event.session.PacketReceivedEvent;
 import com.github.steveice10.packetlib.event.session.SessionAdapter;
+import com.github.steveice10.packetlib.packet.Packet;
 import com.github.steveice10.packetlib.tcp.TcpSessionFactory;
-import com.nukkitx.network.util.DisconnectReason;
-import com.nukkitx.protocol.PlayerSession;
 import com.nukkitx.protocol.bedrock.BedrockServerSession;
 import com.nukkitx.protocol.bedrock.data.GamePublishSetting;
 import com.nukkitx.protocol.bedrock.data.GameRule;
@@ -45,36 +45,51 @@ import com.nukkitx.protocol.bedrock.packet.PlayStatusPacket;
 import com.nukkitx.protocol.bedrock.packet.StartGamePacket;
 import com.nukkitx.protocol.bedrock.packet.TextPacket;
 import lombok.Getter;
+import lombok.Setter;
 import org.geysermc.api.Player;
 import org.geysermc.api.RemoteServer;
 import org.geysermc.api.session.AuthData;
 import org.geysermc.api.window.FormWindow;
 import org.geysermc.connector.GeyserConnector;
-import org.geysermc.connector.network.session.cache.WindowCache;
+import org.geysermc.connector.entity.PlayerEntity;
+import org.geysermc.connector.entity.type.EntityType;
+import org.geysermc.connector.inventory.PlayerInventory;
+import org.geysermc.connector.network.session.cache.*;
 import org.geysermc.connector.network.translators.Registry;
 import org.geysermc.connector.utils.Toolbox;
 
-public class GeyserSession implements PlayerSession, Player {
+import java.net.InetSocketAddress;
+import java.util.UUID;
 
-    private GeyserConnector connector;
+@Getter
+public class GeyserSession implements Player {
 
-    @Getter
+    private final GeyserConnector connector;
+    private final BedrockServerSession upstream;
     private RemoteServer remoteServer;
 
-    @Getter
-    private BedrockServerSession upstream;
-
-    @Getter
     private Client downstream;
 
-    @Getter
     private AuthData authenticationData;
 
-    @Getter
+    private PlayerEntity playerEntity;
+    private PlayerInventory inventory;
+
+    private ChunkCache chunkCache;
+    private EntityCache entityCache;
+    private InventoryCache inventoryCache;
+    private ScoreboardCache scoreboardCache;
     private WindowCache windowCache;
 
-    @Getter
+    private DataCache<Packet> javaPacketCache;
+
+    @Setter
+    private Vector2i lastChunkPosition = null;
+
     private boolean loggedIn;
+
+    @Setter
+    private boolean spawned;
 
     private boolean closed;
 
@@ -82,9 +97,21 @@ public class GeyserSession implements PlayerSession, Player {
         this.connector = connector;
         this.upstream = bedrockServerSession;
 
+        this.chunkCache = new ChunkCache(this);
+        this.entityCache = new EntityCache(this);
+        this.inventoryCache = new InventoryCache(this);
+        this.scoreboardCache = new ScoreboardCache(this);
         this.windowCache = new WindowCache(this);
 
+        this.playerEntity = new PlayerEntity(UUID.randomUUID(), 1, 1, EntityType.PLAYER, new Vector3f(0, 0, 0), new Vector3f(0, 0, 0), new Vector3f(0, 0, 0));
+        this.inventory = new PlayerInventory();
+
+        this.javaPacketCache = new DataCache<Packet>();
+
+        this.spawned = false;
         this.loggedIn = false;
+
+        this.inventoryCache.getInventories().put(0, inventory);
     }
 
     public void connect(RemoteServer remoteServer) {
@@ -92,7 +119,7 @@ public class GeyserSession implements PlayerSession, Player {
         startGame();
 
         this.remoteServer = remoteServer;
-        if (!connector.getConfig().getRemote().isOnlineMode()) {
+        if (!(connector.getConfig().getRemote().getAuthType().hashCode() == "online".hashCode())) {
             connector.getLogger().info("Attempting to login using offline mode... authentication is disabled.");
             authenticate(authenticationData.getName());
         }
@@ -100,6 +127,7 @@ public class GeyserSession implements PlayerSession, Player {
 
     public void authenticate(String username) {
         authenticate(username, "");
+        connector.addPlayer(this);
     }
 
     public void authenticate(String username, String password) {
@@ -123,6 +151,7 @@ public class GeyserSession implements PlayerSession, Player {
                 public void connected(ConnectedEvent event) {
                     loggedIn = true;
                     connector.getLogger().info(authenticationData.getName() + " (logged in as: " + protocol.getProfile().getName() + ")" + " has connected to remote java server on address " + remoteServer.getAddress());
+                    playerEntity.setUuid(protocol.getProfile().getId());
                 }
 
                 @Override
@@ -134,7 +163,8 @@ public class GeyserSession implements PlayerSession, Player {
 
                 @Override
                 public void packetReceived(PacketReceivedEvent event) {
-                    Registry.JAVA.translate(event.getPacket().getClass(), event.getPacket(), GeyserSession.this);
+                    if (!closed)
+                        Registry.JAVA.translate(event.getPacket().getClass(), event.getPacket(), GeyserSession.this);
                 }
             });
 
@@ -147,29 +177,23 @@ public class GeyserSession implements PlayerSession, Player {
     public void disconnect(String reason) {
         if (!closed) {
             loggedIn = false;
-            downstream.getSession().disconnect(reason);
-            upstream.disconnect(reason);
+            if (downstream != null && downstream.getSession() != null) {
+                downstream.getSession().disconnect(reason);
+            }
+            if (upstream != null && !upstream.isClosed()) {
+                upstream.disconnect(reason);
+            }
         }
+
+        closed = true;
     }
 
-    @Override
     public boolean isClosed() {
         return closed;
     }
 
-    @Override
     public void close() {
         disconnect("Server closed.");
-    }
-
-    @Override
-    public void onDisconnect(DisconnectReason disconnectReason) {
-        downstream.getSession().disconnect("Disconnected from server. Reason: " + disconnectReason);
-    }
-
-    @Override
-    public void onDisconnect(String reason) {
-        downstream.getSession().disconnect("Disconnected from server. Reason: " + reason);
     }
 
     public void setAuthenticationData(AuthData authData) {
@@ -205,21 +229,26 @@ public class GeyserSession implements PlayerSession, Player {
         windowCache.showWindow(window, id);
     }
 
+    @Override
+    public InetSocketAddress getSocketAddress() {
+        return this.upstream.getAddress();
+    }
+
     public void sendForm(FormWindow window) {
         windowCache.showWindow(window);
     }
 
     private void startGame() {
         StartGamePacket startGamePacket = new StartGamePacket();
-        startGamePacket.setUniqueEntityId(1); // TODO: Cache this value
-        startGamePacket.setRuntimeEntityId(1); // TODO: Cache this value
+        startGamePacket.setUniqueEntityId(playerEntity.getGeyserId());
+        startGamePacket.setRuntimeEntityId(playerEntity.getGeyserId());
         startGamePacket.setPlayerGamemode(0);
-        startGamePacket.setPlayerPosition(new Vector3f(0, 0, 0));
+        startGamePacket.setPlayerPosition(new Vector3f(0, 69, 0));
         startGamePacket.setRotation(new Vector2f(1, 1));
 
-        startGamePacket.setSeed(1111);
-        startGamePacket.setDimensionId(0);
-        startGamePacket.setGeneratorId(0);
+        startGamePacket.setSeed(0);
+        startGamePacket.setDimensionId(playerEntity.getDimension());
+        startGamePacket.setGeneratorId(1);
         startGamePacket.setLevelGamemode(0);
         startGamePacket.setDifficulty(1);
         startGamePacket.setDefaultSpawn(new Vector3i(0, 0, 0));
@@ -248,7 +277,7 @@ public class GeyserSession implements PlayerSession, Player {
         startGamePacket.setFromWorldTemplate(false);
         startGamePacket.setWorldTemplateOptionLocked(false);
 
-        startGamePacket.setLevelId("oerjhii");
+        startGamePacket.setLevelId("world");
         startGamePacket.setWorldName("world");
         startGamePacket.setPremiumWorldTemplateId("00000000-0000-0000-0000-000000000000");
         startGamePacket.setCurrentTick(0);

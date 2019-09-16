@@ -25,8 +25,6 @@
 
 package org.geysermc.connector;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.nukkitx.protocol.bedrock.BedrockPacketCodec;
 import com.nukkitx.protocol.bedrock.BedrockServer;
 import com.nukkitx.protocol.bedrock.v361.Bedrock_v361;
@@ -34,6 +32,7 @@ import lombok.Getter;
 import org.fusesource.jansi.AnsiConsole;
 import org.geysermc.api.Connector;
 import org.geysermc.api.Geyser;
+import org.geysermc.api.Player;
 import org.geysermc.api.command.CommandMap;
 import org.geysermc.api.logger.Logger;
 import org.geysermc.api.plugin.Plugin;
@@ -41,20 +40,26 @@ import org.geysermc.connector.command.GeyserCommandMap;
 import org.geysermc.connector.configuration.GeyserConfiguration;
 import org.geysermc.connector.console.ConsoleCommandReader;
 import org.geysermc.connector.console.GeyserLogger;
+import org.geysermc.connector.metrics.Metrics;
 import org.geysermc.connector.network.ConnectorServerEventHandler;
 import org.geysermc.connector.network.remote.RemoteJavaServer;
 import org.geysermc.connector.network.translators.TranslatorsInit;
 import org.geysermc.connector.plugin.GeyserPluginLoader;
 import org.geysermc.connector.plugin.GeyserPluginManager;
 import org.geysermc.connector.thread.PingPassthroughThread;
+import org.geysermc.connector.utils.FileUtils;
 import org.geysermc.connector.utils.Toolbox;
 
-import java.io.*;
+import java.io.File;
+import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.text.DecimalFormat;
+import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+@Getter
 public class GeyserConnector implements Connector {
 
     public static final BedrockPacketCodec BEDROCK_PACKET_CODEC = Bedrock_v361.V361_CODEC;
@@ -62,40 +67,38 @@ public class GeyserConnector implements Connector {
     private static final String NAME = "Geyser";
     private static final String VERSION = "1.0-SNAPSHOT";
 
+    private final Map<Object, Player> players = new HashMap<>();
+
     private static GeyserConnector instance;
 
-    @Getter
     private RemoteJavaServer remoteServer;
 
-    @Getter
     private Logger logger;
 
-    @Getter
     private CommandMap commandMap;
 
-    @Getter
     private GeyserConfiguration config;
-
-    @Getter
     private GeyserPluginManager pluginManager;
 
-    @Getter
     private boolean shuttingDown = false;
 
-    @Getter
     private final ScheduledExecutorService generalThreadPool;
-
-    @Getter
     private PingPassthroughThread passthroughThread;
+
+    private Metrics metrics;
 
     public static void main(String[] args) {
         instance = new GeyserConnector();
     }
 
     private GeyserConnector() {
+        long startupTime = System.currentTimeMillis();
+
+        // Metric
         if(!(System.console() == null) && System.getProperty("os.name", "Windows 10").toLowerCase().contains("windows")) {
             AnsiConsole.systemInstall();
         }
+
         instance = this;
 
         this.generalThreadPool = Executors.newScheduledThreadPool(32); //TODO: Make configurable value
@@ -111,21 +114,11 @@ public class GeyserConnector implements Connector {
         logger.info("******************************************");
 
         try {
-            File configFile = new File("config.yml");
-            if (!configFile.exists()) {
-                FileOutputStream fos = new FileOutputStream(configFile);
-                InputStream is = GeyserConnector.class.getResourceAsStream("/config.yml");
-                int data;
-                while ((data = is.read()) != -1)
-                    fos.write(data);
-                is.close();
-                fos.close();
-            }
+            File configFile = FileUtils.fileOrCopiedFromResource("config.yml", (x) -> x.replaceAll("UUIDTESTUUIDTEST", UUID.randomUUID().toString()));
 
-            ObjectMapper objectMapper = new ObjectMapper(new YAMLFactory());
-            config = objectMapper.readValue(configFile, GeyserConfiguration.class);
+            config = FileUtils.loadConfig(configFile, GeyserConfiguration.class);
         } catch (IOException ex) {
-            logger.severe("Failed to create config.yml! Make sure it's up to date and writable!");
+            logger.severe("Failed to read/create config.yml! Make sure it's up to date and/or readable+writable!", ex);
             shutdown();
         }
 
@@ -151,12 +144,23 @@ public class GeyserConnector implements Connector {
         bedrockServer.setHandler(new ConnectorServerEventHandler(this));
         bedrockServer.bind().whenComplete((avoid, throwable) -> {
             if (throwable == null) {
-                logger.info("Started RakNet on " + config.getBedrock().getAddress() + ":" + config.getBedrock().getPort());
+                logger.info("Started Geyser on " + config.getBedrock().getAddress() + ":" + config.getBedrock().getPort());
             } else {
-                logger.severe("Failed to start RakNet on " + config.getBedrock().getAddress() + ":" + config.getBedrock().getPort());
+                logger.severe("Failed to start Geyser on " + config.getBedrock().getAddress() + ":" + config.getBedrock().getPort());
                 throwable.printStackTrace();
             }
         }).join();
+
+        metrics = new Metrics("GeyserMC", config.getUUID(), true, java.util.logging.Logger.getLogger(""));
+        metrics.addCustomChart(new Metrics.SingleLineChart("servers", () -> 1));
+        metrics.addCustomChart(new Metrics.SingleLineChart("players", Geyser::getPlayerCount));
+
+        double completeTime = (System.currentTimeMillis() - startupTime) / 1000D;
+        logger.info(String.format("Done (%ss)! Run /help for help!", new DecimalFormat("#.###").format(completeTime)));
+    }
+
+    public Collection<Player> getConnectedPlayers() {
+        return new ArrayList<>(players.values());
     }
 
     public void shutdown() {
@@ -170,5 +174,17 @@ public class GeyserConnector implements Connector {
 
         generalThreadPool.shutdown();
         System.exit(0);
+    }
+
+    public void addPlayer(Player player) {
+        players.put(player.getAuthenticationData().getName(), player);
+        players.put(player.getAuthenticationData().getUUID(), player);
+        players.put(player.getSocketAddress(), player);
+    }
+
+    public void removePlayer(Player player) {
+        players.remove(player.getAuthenticationData().getName());
+        players.remove(player.getAuthenticationData().getUUID());
+        players.remove(player.getSocketAddress());
     }
 }

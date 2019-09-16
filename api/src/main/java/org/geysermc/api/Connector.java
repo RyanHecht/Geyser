@@ -29,6 +29,9 @@ import org.geysermc.api.command.CommandMap;
 import org.geysermc.api.logger.Logger;
 import org.geysermc.api.plugin.PluginManager;
 
+import java.util.Collection;
+import java.util.concurrent.ScheduledExecutorService;
+
 public interface Connector {
 
     /**
@@ -51,6 +54,20 @@ public interface Connector {
      * @return the plugin manager
      */
     PluginManager getPluginManager();
+
+    /**
+     * Returns the general thread pool
+     *
+     * @return the general thread pool
+     */
+    ScheduledExecutorService getGeneralThreadPool();
+
+    /**
+     * Returns a collection of the connected players
+     *
+     * @return a collection of the connected players
+     */
+    Collection<Player> getConnectedPlayers();
 
     /**
      * Shuts down the connector

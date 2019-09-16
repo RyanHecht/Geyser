@@ -50,9 +50,12 @@ public class Registry<T> {
 
     public <P extends T> void translate(Class<? extends P> clazz, P packet, GeyserSession session) {
         try {
-            ((PacketTranslator<P>) MAP.get(clazz)).translate(packet, session);
+            if (MAP.containsKey(clazz)) {
+                ((PacketTranslator<P>) MAP.get(clazz)).translate(packet, session);
+            }
         } catch (NullPointerException ex) {
             GeyserLogger.DEFAULT.debug("Could not translate packet " + packet.getClass().getSimpleName());
+            ex.printStackTrace();
         }
     }
 }

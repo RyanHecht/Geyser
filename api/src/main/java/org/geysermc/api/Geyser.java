@@ -29,6 +29,13 @@ import org.geysermc.api.command.CommandMap;
 import org.geysermc.api.logger.Logger;
 import org.geysermc.api.plugin.PluginManager;
 
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.ScheduledExecutorService;
+
 public class Geyser {
 
     private static Connector connector;
@@ -76,5 +83,25 @@ public class Geyser {
      */
     public static CommandMap getCommandMap() {
         return connector.getCommandMap();
+    }
+
+    public static ScheduledExecutorService getGeneralThreadPool() {
+        return connector.getGeneralThreadPool();
+    }
+
+    /**
+     * @return the amount of online players
+     */
+    public static int getPlayerCount() {
+        return connector.getConnectedPlayers().size();
+    }
+
+    /**
+     * Returns a collection of the connected players
+     *
+     * @return a collection of the connected players
+     */
+    public static Collection<Player> getConnectedPlayers() {
+        return connector.getConnectedPlayers();
     }
 }
