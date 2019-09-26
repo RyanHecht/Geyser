@@ -23,16 +23,19 @@
  * @link https://github.com/GeyserMC/Geyser
  */
 
-package org.geysermc.connector.configuration;
+package org.geysermc.connector.network.translators.java;
 
-import lombok.Getter;
+import com.github.steveice10.mc.protocol.packet.ingame.server.ServerDifficultyPacket;
+import com.nukkitx.protocol.bedrock.packet.SetDifficultyPacket;
+import org.geysermc.connector.network.session.GeyserSession;
+import org.geysermc.connector.network.translators.PacketTranslator;
 
-@Getter
-public class BedrockConfiguration {
+public class JavaDifficultyTranslator extends PacketTranslator<ServerDifficultyPacket> {
 
-    private String address;
-    private int port;
-
-    private String motd1;
-    private String motd2;
+    @Override
+    public void translate(ServerDifficultyPacket packet, GeyserSession session) {
+        SetDifficultyPacket setDifficultyPacket = new SetDifficultyPacket();
+        setDifficultyPacket.setDifficulty(packet.getDifficulty().ordinal());
+        session.getUpstream().sendPacket(setDifficultyPacket);
+    }
 }

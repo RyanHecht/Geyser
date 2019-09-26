@@ -25,17 +25,20 @@
 
 package org.geysermc.connector.network.translators.item;
 
-import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 @Getter
-@AllArgsConstructor
 public class JavaItem {
 
     public static JavaItem AIR = new JavaItem("minecraft:air", 0);
 
-    private String identifier;
-    private int id;
+    protected String identifier;
+    protected int id;
+
+    public JavaItem(String identifier, int id) {
+        this.identifier = identifier;
+        this.id = id;
+    }
 
     @Override
     public int hashCode() {

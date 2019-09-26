@@ -29,6 +29,7 @@ import com.flowpowered.math.vector.Vector2f;
 import com.flowpowered.math.vector.Vector2i;
 import com.flowpowered.math.vector.Vector3f;
 import com.flowpowered.math.vector.Vector3i;
+import com.github.steveice10.mc.auth.data.GameProfile;
 import com.github.steveice10.mc.auth.exception.request.RequestException;
 import com.github.steveice10.mc.protocol.MinecraftProtocol;
 import com.github.steveice10.packetlib.Client;
@@ -63,13 +64,10 @@ import java.util.UUID;
 
 @Getter
 public class GeyserSession implements Player {
-
     private final GeyserConnector connector;
     private final BedrockServerSession upstream;
     private RemoteServer remoteServer;
-
     private Client downstream;
-
     private AuthData authenticationData;
 
     private PlayerEntity playerEntity;
@@ -85,12 +83,14 @@ public class GeyserSession implements Player {
 
     @Setter
     private Vector2i lastChunkPosition = null;
+    @Setter
+    private int renderDistance;
 
     private boolean loggedIn;
+    private boolean loggingIn;
 
     @Setter
     private boolean spawned;
-
     private boolean closed;
 
     public GeyserSession(GeyserConnector connector, BedrockServerSession bedrockServerSession) {
@@ -103,10 +103,10 @@ public class GeyserSession implements Player {
         this.scoreboardCache = new ScoreboardCache(this);
         this.windowCache = new WindowCache(this);
 
-        this.playerEntity = new PlayerEntity(UUID.randomUUID(), 1, 1, EntityType.PLAYER, new Vector3f(0, 0, 0), new Vector3f(0, 0, 0), new Vector3f(0, 0, 0));
+        this.playerEntity = new PlayerEntity(new GameProfile(UUID.randomUUID(), "unknown"), -1, 1, new Vector3f(0, 0, 0), new Vector3f(0, 0, 0), new Vector3f(0, 0, 0));
         this.inventory = new PlayerInventory();
 
-        this.javaPacketCache = new DataCache<Packet>();
+        this.javaPacketCache = new DataCache<>();
 
         this.spawned = false;
         this.loggedIn = false;
@@ -136,42 +136,49 @@ public class GeyserSession implements Player {
             return;
         }
 
-        try {
-            MinecraftProtocol protocol;
-            if (password != null && !password.isEmpty()) {
-                protocol = new MinecraftProtocol(username, password);
-            } else {
-                protocol = new MinecraftProtocol(username);
+        loggedIn = true;
+        // new thread so clients don't timeout
+        new Thread(() -> {
+            try {
+                MinecraftProtocol protocol;
+                if (password != null && !password.isEmpty()) {
+                    protocol = new MinecraftProtocol(username, password);
+                } else {
+                    protocol = new MinecraftProtocol(username);
+                }
+
+                downstream = new Client(remoteServer.getAddress(), remoteServer.getPort(), protocol, new TcpSessionFactory());
+                downstream.getSession().addListener(new SessionAdapter() {
+
+                    @Override
+                    public void connected(ConnectedEvent event) {
+                        loggingIn = false;
+                        loggedIn = true;
+                        connector.getLogger().info(authenticationData.getName() + " (logged in as: " + protocol.getProfile().getName() + ")" + " has connected to remote java server on address " + remoteServer.getAddress());
+                        playerEntity.setUuid(protocol.getProfile().getId());
+                        playerEntity.setUsername(protocol.getProfile().getName());
+                    }
+
+                    @Override
+                    public void disconnected(DisconnectedEvent event) {
+                        loggingIn = false;
+                        loggedIn = false;
+                        connector.getLogger().info(authenticationData.getName() + " has disconnected from remote java server on address " + remoteServer.getAddress() + " because of " + event.getReason());
+                        upstream.disconnect(event.getReason());
+                    }
+
+                    @Override
+                    public void packetReceived(PacketReceivedEvent event) {
+                        if (!closed)
+                            Registry.JAVA.translate(event.getPacket().getClass(), event.getPacket(), GeyserSession.this);
+                    }
+                });
+
+                downstream.getSession().connect();
+            } catch (RequestException ex) {
+                ex.printStackTrace();
             }
-
-            downstream = new Client(remoteServer.getAddress(), remoteServer.getPort(), protocol, new TcpSessionFactory());
-            downstream.getSession().addListener(new SessionAdapter() {
-
-                @Override
-                public void connected(ConnectedEvent event) {
-                    loggedIn = true;
-                    connector.getLogger().info(authenticationData.getName() + " (logged in as: " + protocol.getProfile().getName() + ")" + " has connected to remote java server on address " + remoteServer.getAddress());
-                    playerEntity.setUuid(protocol.getProfile().getId());
-                }
-
-                @Override
-                public void disconnected(DisconnectedEvent event) {
-                    loggedIn = false;
-                    connector.getLogger().info(authenticationData.getName() + " has disconnected from remote java server on address " + remoteServer.getAddress() + " because of " + event.getReason());
-                    upstream.disconnect(event.getReason());
-                }
-
-                @Override
-                public void packetReceived(PacketReceivedEvent event) {
-                    if (!closed)
-                        Registry.JAVA.translate(event.getPacket().getClass(), event.getPacket(), GeyserSession.this);
-                }
-            });
-
-            downstream.getSession().connect();
-        } catch (RequestException ex) {
-            ex.printStackTrace();
-        }
+        }).start();
     }
 
     public void disconnect(String reason) {

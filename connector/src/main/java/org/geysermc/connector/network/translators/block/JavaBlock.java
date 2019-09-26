@@ -23,16 +23,24 @@
  * @link https://github.com/GeyserMC/Geyser
  */
 
-package org.geysermc.connector.configuration;
+package org.geysermc.connector.network.translators.block;
 
 import lombok.Getter;
+import org.geysermc.connector.network.translators.item.JavaItem;
 
 @Getter
-public class BedrockConfiguration {
+public class JavaBlock extends JavaItem {
 
-    private String address;
-    private int port;
+    private String data;
 
-    private String motd1;
-    private String motd2;
+    public JavaBlock(String identifier, String data, int id) {
+        super(identifier, id);
+
+        this.data = data;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        return obj == this || (obj instanceof JavaBlock && ((JavaBlock) obj).id == this.id && ((JavaBlock) obj).identifier.equals(this.identifier));
+    }
 }

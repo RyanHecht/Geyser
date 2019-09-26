@@ -68,8 +68,8 @@ public class Entity {
 
     protected boolean valid;
 
-    protected Set<Long> passengers = new HashSet<Long>();
-    protected Map<AttributeType, Attribute> attributes = new HashMap<AttributeType, Attribute>();
+    protected Set<Long> passengers = new HashSet<>();
+    protected Map<AttributeType, Attribute> attributes = new HashMap<>();
 
     public Entity(long entityId, long geyserId, EntityType entityType, Vector3f position, Vector3f motion, Vector3f rotation) {
         this.entityId = entityId;
@@ -101,8 +101,7 @@ public class Entity {
     }
 
     public void despawnEntity(GeyserSession session) {
-        if (!valid)
-            return;
+        if (!valid) return;
 
         RemoveEntityPacket removeEntityPacket = new RemoveEntityPacket();
         removeEntityPacket.setUniqueEntityId(geyserId);
@@ -129,9 +128,6 @@ public class Entity {
     }
 
     public void moveAbsolute(Vector3f position, Vector3f rotation) {
-        if (position.getX() == 0 && position.getX() == 0 && position.getX() == 0 && rotation.getX() == 0 && rotation.getY() == 0)
-            return;
-
         this.position = position;
         this.rotation = rotation;
         this.movePending = true;
